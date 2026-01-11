@@ -17,7 +17,7 @@ concurrency:
 
 env:
   SERVER_PORT: '50051'
-  SERVER_TIMEOUT: 120
+  SERVER_TIMEOUT: ${{ github.event.inputs.server_timeout || '120' }}
 
 jobs:
   start-server:
@@ -324,28 +324,6 @@ jobs:
           done
           
           echo "Server timeout reached (${SERVER_TIMEOUT_MINUTES} minutes)"
-          echo "::endgroup::"
-
-      - name: Wait for Server Timeout
-        timeout-minutes: ${{ fromJson(github.event.inputs.server_timeout || '120') }}
-        run: |
-          set -euo pipefail
-          echo "::group::Server Running (waiting for timeout or manual stop)"
-          
-          SERVER_PID=$(cat /tmp/server.pid)
-          TUNNEL_PID=$(cat /tmp/tunnel.pid)
-          
-          echo "Server PID: $SERVER_PID"
-          echo "Tunnel PID: $TUNNEL_PID"
-          echo "Server will run until timeout or manual cancellation"
-          
-          # Monitor server health
-          while kill -0 $SERVER_PID 2>/dev/null; do
-            sleep 30
-            echo "Server still running... $(date)"
-          done
-          
-          echo "Server stopped"
           echo "::endgroup::"
 
       - name: Stop Server and Tunnel
