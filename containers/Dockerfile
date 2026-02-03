@@ -5,12 +5,12 @@ LABEL description="AI Agent Penetration Testing Environment with Comprehensive A
 RUN apt-get update && \
     apt-get install -y kali-archive-keyring sudo && \
     apt-get update && \
-    apt-get upgrade -y
+    apt-get upgrade -y && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash pentester && \
     usermod -aG sudo pentester && \
-    echo "pentester ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
-    touch /home/pentester/.hushlogin
+    echo "pentester ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 RUN mkdir -p /home/pentester/configs \
              /home/pentester/wordlists \
@@ -29,13 +29,17 @@ RUN apt-get update && \
     build-essential software-properties-common \
     gcc libc6-dev pkg-config libpcap-dev libssl-dev \
     python3 python3-pip python3-dev python3-venv python3-setuptools \
-    golang-go \
+    golang-go rustc cargo \
     net-tools dnsutils whois \
     jq parallel ripgrep grep \
     less man-db procps htop \
     iproute2 iputils-ping netcat-traditional \
     nmap ncat ndiff \
-    sqlmap nuclei subfinder naabu ffuf \
+    sqlmap nuclei subfinder naabu ffuf whatweb theharvester feroxbuster python3-requests \
+    metasploit-framework \
+    exploitdb \
+    hydra responder netexec powershell-empire sherlock john-data john legion ghidra \
+    mimikatz medusa powersploit bulk-extractor stegosuite steghide commix tcpdump 7zip radare2 \
     nodejs npm pipx \
     libcap2-bin \
     gdb \
@@ -43,7 +47,8 @@ RUN apt-get update && \
     libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libatspi2.0-0 \
     libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2 libasound2t64 \
     fonts-unifont fonts-noto-color-emoji fonts-freefont-ttf fonts-dejavu-core ttf-bitstream-vera \
-    libnss3-tools
+    libnss3-tools \
+    && rm -rf /var/lib/apt/lists/*
 
 
 RUN setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
@@ -111,16 +116,55 @@ USER root
 
 RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
 
-RUN apt-get update && apt-get install -y zaproxy
+RUN apt-get update && apt-get install -y zaproxy && rm -rf /var/lib/apt/lists/*
 
 RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
-RUN apt-get install -y wapiti
+RUN apt-get install -y wapiti && rm -rf /var/lib/apt/lists/*
+
+# Install Gitleaks
+RUN curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/gitleaks_8.18.2_linux_x64.tar.gz -o gitleaks.tar.gz && \
+    tar -xzf gitleaks.tar.gz && \
+    mv gitleaks /usr/local/bin/ && \
+    rm gitleaks.tar.gz
+
+# Install Tor for anonymous networking and traffic routing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tor \
+    torsocks \
+    proxychains4 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure Tor for SOCKS proxy (default port 9050)
+RUN echo "SocksPort 9050" >> /etc/tor/torrc && \
+    echo "ControlPort 9051" >> /etc/tor/torrc && \
+    echo "CookieAuthentication 0" >> /etc/tor/torrc && \
+    echo "HashedControlPassword 16:872860B76453A77D60CA2BB8C1A7042072093276A3D701AD684053EC4C" >> /etc/tor/torrc
+
+# Configure proxychains to use Tor
+RUN sed -i 's/^socks4.*/socks5 127.0.0.1 9050/' /etc/proxychains4.conf 2>/dev/null || \
+    echo "socks5 127.0.0.1 9050" >> /etc/proxychains4.conf
+
+# Install Stowaway - Multi-hop proxy tool for pivoting
+# Stowaway is a Multi-hop proxy tool for penetration testers
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        STOWAWAY_ARCH="linux_x64"; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+        STOWAWAY_ARCH="linux_arm64"; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    curl -sSfL "https://github.com/ph4ntonn/Stowaway/releases/download/v2.2/${STOWAWAY_ARCH}_admin" -o /usr/local/bin/stowaway_admin && \
+    curl -sSfL "https://github.com/ph4ntonn/Stowaway/releases/download/v2.2/${STOWAWAY_ARCH}_agent" -o /usr/local/bin/stowaway_agent && \
+    chmod +x /usr/local/bin/stowaway_admin /usr/local/bin/stowaway_agent
 
 USER pentester
 
 RUN pipx install semgrep && \
-    pipx install bandit
+    pipx install bandit && \
+    pipx install safety && \
+    pipx install pip-audit
 
 RUN npm install -g jshint
 
@@ -133,6 +177,27 @@ RUN apt-get autoremove -y && \
 ENV PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/venv/bin:$PATH"
 ENV VIRTUAL_ENV="/app/venv"
 ENV POETRY_HOME="/opt/poetry"
+
+
+# Install Kiterunner (kr)
+RUN curl -sL https://github.com/assetnote/kiterunner/releases/download/v1.0.2/kiterunner_1.0.2_linux_amd64.tar.gz | tar xz -C /usr/local/bin kr
+
+# Install GraphQL Tools
+USER pentester
+RUN pipx install clairvoyance && \
+    curl -sSL https://github.com/dolevf/graphw00f/archive/refs/heads/main.tar.gz -o /tmp/graphw00f.tar.gz && \
+    mkdir -p /home/pentester/tools/graphw00f && \
+    tar -xzf /tmp/graphw00f.tar.gz -C /home/pentester/tools/graphw00f --strip-components=1 && \
+    rm /tmp/graphw00f.tar.gz
+
+USER root
+RUN echo '#!/bin/bash\npython3 /home/pentester/tools/graphw00f/main.py "$@"' > /usr/local/bin/graphw00f && \
+    chmod +x /usr/local/bin/graphw00f
+
+# Download Basic Wordlists
+RUN mkdir -p /home/pentester/wordlists && \
+    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/raft-medium-files.txt -o /home/pentester/wordlists/raft-medium-files.txt && \
+    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt -o /home/pentester/wordlists/common.txt
 
 WORKDIR /app
 
@@ -154,13 +219,14 @@ ENV STRIX_SANDBOX_MODE=true
 ENV PYTHONPATH=/app
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 
 RUN mkdir -p /workspace && chown -R pentester:pentester /workspace /app
 
-COPY pyproject.toml poetry.lock ./
+COPY --chown=pentester:pentester pyproject.toml poetry.lock ./
 
 USER pentester
-RUN poetry install --no-root --without dev --extras sandbox
+RUN poetry lock && poetry install --no-root --without dev --extras sandbox
 RUN poetry run playwright install chromium
 
 RUN /app/venv/bin/pip install -r /home/pentester/tools/jwt_tool/requirements.txt && \
@@ -174,14 +240,10 @@ COPY strix/utils/ /app/strix/utils/
 COPY strix/telemetry/ /app/strix/telemetry/
 COPY strix/runtime/tool_server.py strix/runtime/__init__.py strix/runtime/runtime.py /app/strix/runtime/
 
-COPY strix/tools/__init__.py strix/tools/registry.py strix/tools/executor.py strix/tools/argument_parser.py strix/tools/context.py /app/strix/tools/
-
-COPY strix/tools/browser/ /app/strix/tools/browser/
-COPY strix/tools/file_edit/ /app/strix/tools/file_edit/
-COPY strix/tools/notes/ /app/strix/tools/notes/
-COPY strix/tools/python/ /app/strix/tools/python/
-COPY strix/tools/terminal/ /app/strix/tools/terminal/
-COPY strix/tools/proxy/ /app/strix/tools/proxy/
+COPY strix/llm/ /app/strix/llm/
+COPY strix/agents/ /app/strix/agents/
+COPY strix/resources/ /app/strix/resources/
+COPY strix/tools/ /app/strix/tools/
 
 RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.bashrc && \
     echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.profile
