@@ -36,17 +36,25 @@ def update_secret(
         "User-Agent": "Strix-Secret-Updater"
     }
 
-    # The SERVER_TOKEN has special permissions to update QWEN_TOKENS directly
-    # We don't need to get a public key since the encryption was already done by the workflow
-    secret_url = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/{secret_name}"
-
-    # Prepare the payload - the secret_value is already AES-256-CBC encrypted and base64 encoded
-    payload = {
-        "encrypted_value": secret_value  # Our AES-encrypted and base64-encoded value
-        # Note: We're not including key_id since the SERVER_TOKEN handles this differently
-    }
+    # Get the public key to obtain the key_id required by GitHub API
+    pub_key_url = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/public-key"
 
     try:
+        response = requests.get(pub_key_url, headers=headers)
+        if response.status_code != 200:
+            print(f"❌ Failed to get public key: {response.status_code} - {response.text}")
+            return False
+
+        pub_key_data = response.json()
+        key_id = pub_key_data["key_id"]
+
+        # Update the secret with the already AES-encrypted value
+        secret_url = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/{secret_name}"
+        payload = {
+            "encrypted_value": secret_value,  # Our AES-encrypted and base64-encoded value
+            "key_id": key_id  # Required by GitHub API even when using special tokens
+        }
+
         response = requests.put(secret_url, headers=headers, json=payload)
 
         if response.status_code == 201 or response.status_code == 204:
@@ -59,6 +67,9 @@ def update_secret(
 
     except requests.exceptions.RequestException as e:
         print(f"❌ Request error: {str(e)}")
+        return False
+    except KeyError as e:
+        print(f"❌ Missing key in response: {str(e)}")
         return False
     except Exception as e:
         print(f"❌ Unexpected error: {str(e)}")
