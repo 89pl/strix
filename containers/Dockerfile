@@ -234,16 +234,16 @@ RUN /app/venv/bin/pip install -r /home/pentester/tools/jwt_tool/requirements.txt
 
 RUN echo "# Sandbox Environment" > README.md
 
-COPY strix/__init__.py strix/
-COPY strix/config/ /app/strix/config/
-COPY strix/utils/ /app/strix/utils/
-COPY strix/telemetry/ /app/strix/telemetry/
-COPY strix/runtime/tool_server.py strix/runtime/__init__.py strix/runtime/runtime.py /app/strix/runtime/
-
-COPY strix/llm/ /app/strix/llm/
-COPY strix/agents/ /app/strix/agents/
-COPY strix/resources/ /app/strix/resources/
-COPY strix/tools/ /app/strix/tools/
+COPY --chown=pentester:pentester strix/__init__.py /app/strix/
+COPY --chown=pentester:pentester strix/agents/ /app/strix/agents/
+COPY --chown=pentester:pentester strix/config/ /app/strix/config/
+COPY --chown=pentester:pentester strix/interface/ /app/strix/interface/
+COPY --chown=pentester:pentester strix/llm/ /app/strix/llm/
+COPY --chown=pentester:pentester strix/runtime/ /app/strix/runtime/
+COPY --chown=pentester:pentester strix/skills/ /app/strix/skills/
+COPY --chown=pentester:pentester strix/telemetry/ /app/strix/telemetry/
+COPY --chown=pentester:pentester strix/tools/ /app/strix/tools/
+COPY --chown=pentester:pentester strix/utils/ /app/strix/utils/
 
 RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.bashrc && \
     echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.profile
