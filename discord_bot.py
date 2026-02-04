@@ -31,11 +31,17 @@ MAX_MEMORY_ENTRIES = 10  # Maximum number of conversation entries to keep
 @bot.event
 async def on_ready():
     print(f'Discord bot is ready. Logged in as {bot.user}')
-    channel_id = int(os.getenv('DISCORD_CHANNEL_ID', '0'))
-    if channel_id != 0:
-        channel = bot.get_channel(channel_id)
-        if channel:
-            await channel.send(f"✅ Strix Security Agent is online and ready!\nModel: {os.getenv('CLIPROXY_MODEL', 'unknown')}\nAccounts: {os.getenv('ACCOUNTS_COUNT', '0')}")
+    channel_id_str = os.getenv('DISCORD_CHANNEL_ID', '')
+    if channel_id_str:
+        try:
+            channel_id = int(channel_id_str)
+            channel = bot.get_channel(channel_id)
+            if channel:
+                await channel.send(f"✅ Strix Security Agent is online and ready!\nModel: {os.getenv('CLIPROXY_MODEL', 'unknown')}\nAccounts: {os.getenv('ACCOUNTS_COUNT', '0')}")
+        except ValueError:
+            print(f"Invalid channel ID: {channel_id_str}")
+    else:
+        print("DISCORD_CHANNEL_ID not set, skipping startup message")
 
 @bot.event
 async def on_message(message):
