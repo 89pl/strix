@@ -24,6 +24,10 @@ current_job_id = None
 job_results = {}
 active_scans = {}  # Track active scans with user info
 
+# Conversation memory system
+conversation_memory = {}  # Stores conversation history per user/channel
+MAX_MEMORY_ENTRIES = 10  # Maximum number of conversation entries to keep
+
 @bot.event
 async def on_ready():
     print(f'Discord bot is ready. Logged in as {bot.user}')
@@ -163,11 +167,55 @@ async def handle_scan_request(message, target):
     scan_thread = threading.Thread(target=run_scan)
     scan_thread.start()
 
+def get_conversation_key(user_id, channel_id):
+    """Generate a unique key for conversation memory"""
+    return f"{user_id}_{channel_id}"
+
+def add_to_conversation_memory(user_id, channel_id, user_message, ai_response):
+    """Add a message exchange to the conversation memory"""
+    key = get_conversation_key(user_id, channel_id)
+
+    if key not in conversation_memory:
+        conversation_memory[key] = []
+
+    # Add the new exchange to memory
+    conversation_memory[key].append({
+        'user': user_message,
+        'ai': ai_response,
+        'timestamp': datetime.now().isoformat()
+    })
+
+    # Keep only the most recent entries
+    if len(conversation_memory[key]) > MAX_MEMORY_ENTRIES:
+        conversation_memory[key] = conversation_memory[key][-MAX_MEMORY_ENTRIES:]
+
+def get_conversation_context(user_id, channel_id):
+    """Retrieve the conversation context for a user in a channel"""
+    key = get_conversation_key(user_id, channel_id)
+
+    if key not in conversation_memory:
+        return []
+
+    return conversation_memory[key]
+
 async def handle_general_query(message, query):
     """Handle a general query to the Strix agent using the LLM"""
     try:
-        # Prepare the message for the LLM
-        llm_prompt = f"You are a cybersecurity expert and security agent. A user has asked: '{query}'. Provide a helpful, accurate response focusing on security aspects."
+        # Get conversation history for context
+        context_history = get_conversation_context(message.author.id, message.channel.id)
+
+        # Prepare the messages for the LLM with conversation history
+        llm_messages = [
+            {"role": "system", "content": "You are a cybersecurity expert and security agent. Provide helpful, accurate responses focusing on security aspects."}
+        ]
+
+        # Add previous conversation history
+        for entry in context_history:
+            llm_messages.append({"role": "user", "content": entry['user']})
+            llm_messages.append({"role": "assistant", "content": entry['ai']})
+
+        # Add the current query
+        llm_messages.append({"role": "user", "content": query})
 
         # Call the LLM through the CLIProxyAPI endpoint
         endpoint = os.getenv('CLIPROXY_ENDPOINT')
@@ -180,7 +228,7 @@ async def handle_general_query(message, query):
 
         payload = {
             'model': model,
-            'messages': [{'role': 'user', 'content': llm_prompt}],
+            'messages': llm_messages,
             'temperature': 0.7,
             'max_tokens': 1000
         }
@@ -190,6 +238,9 @@ async def handle_general_query(message, query):
                 if response.status == 200:
                     data = await response.json()
                     llm_response = data['choices'][0]['message']['content'].strip()
+
+                    # Add to conversation memory
+                    add_to_conversation_memory(message.author.id, message.channel.id, query, llm_response)
 
                     # Send the response back to the user
                     await message.channel.send(f"🤖 Strix Agent Response:\n{llm_response}")
@@ -511,6 +562,16 @@ async def status(ctx):
     else:
         await ctx.send("ℹ️ No active scan jobs")
 
+@bot.command(name='clear_memory')
+async def clear_memory(ctx):
+    """Clear the conversation memory for the current user/channel"""
+    key = get_conversation_key(ctx.author.id, ctx.channel.id)
+    if key in conversation_memory:
+        del conversation_memory[key]
+        await ctx.send("🗑️ Conversation memory cleared for this channel.")
+    else:
+        await ctx.send("📋 No conversation memory to clear for this channel.")
+
 @bot.command(name='help')
 async def help_command(ctx):
     """Show available commands"""
@@ -518,6 +579,7 @@ async def help_command(ctx):
 🛡️ **Strix Security Agent Commands:**
 • `!scan <target>` - Initiate a security scan on the specified target
 • `!status` - Check the status of the current scan job
+• `!clear_memory` - Clear the conversation memory for this channel
 • `!help` - Show this help message
 • `@Strix scan <target>` - Mention the bot to initiate a scan
 • `@Strix <question>` - Ask the Strix agent a security question
