@@ -159,6 +159,22 @@ export POETRY_VIRTUALENVS_CREATE=false
 export TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
 TOOL_SERVER_LOG="/tmp/tool_server.log"
 
+# Validate required environment variables
+if [ -z "$TOOL_SERVER_PORT" ]; then
+  echo "WARNING: TOOL_SERVER_PORT not set, using default port 48081"
+  TOOL_SERVER_PORT=48081
+fi
+
+if [ -z "$TOOL_SERVER_TOKEN" ]; then
+  echo "WARNING: TOOL_SERVER_TOKEN not set, generating a random token"
+  TOOL_SERVER_TOKEN=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+fi
+
+echo "Tool server configuration:"
+echo "  PORT: $TOOL_SERVER_PORT"
+echo "  TIMEOUT: $TOOL_SERVER_TIMEOUT"
+echo "  TOKEN: [set]"
+
 sudo -E -u pentester \
   poetry run python -m strix.runtime.tool_server \
   --token="$TOOL_SERVER_TOKEN" \

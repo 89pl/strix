@@ -31,6 +31,26 @@ MAX_MEMORY_ENTRIES = 10  # Maximum number of conversation entries to keep
 # API readiness check
 api_ready = False
 
+def get_chat_completions_url(base_endpoint: str) -> str:
+    """Construct the correct chat completions URL from the base endpoint.
+    
+    The CLIPROXY_ENDPOINT is set to something like 'http://127.0.0.1:8317/v1'
+    For chat completions, we need to POST to 'http://127.0.0.1:8317/v1/chat/completions'
+    """
+    # Remove trailing slash if present
+    base = base_endpoint.rstrip('/')
+    
+    # Check if endpoint already ends with /chat/completions
+    if base.endswith('/chat/completions'):
+        return base
+    
+    # Check if endpoint ends with /v1, append /chat/completions
+    if base.endswith('/v1'):
+        return f"{base}/chat/completions"
+    
+    # Otherwise, assume it's a base URL and add /v1/chat/completions
+    return f"{base}/v1/chat/completions"
+
 @bot.event
 async def on_ready():
     print(f'Discord bot is ready. Logged in as {bot.user}')
@@ -216,10 +236,31 @@ async def check_api_readiness():
         print("CLIPROXY_ENDPOINT not set")
         return False
 
-    # Try multiple endpoints to check API readiness
-    endpoints_to_check = ["/models", "/v1/models", "/"]
+    # Remove trailing slash for consistent URL construction
+    base_endpoint = endpoint.rstrip('/')
+    
+    # The endpoint is typically 'http://127.0.0.1:8317/v1'
+    # We need to check /v1/models (which is just /models appended to the endpoint)
+    # Also try the base URL without /v1 for compatibility
+    
+    # Build the correct URLs to check
+    urls_to_check = []
+    
+    if base_endpoint.endswith('/v1'):
+        # Endpoint already has /v1, so /models is correct
+        urls_to_check.append(f"{base_endpoint}/models")
+        # Also try base URL health check
+        base_url = base_endpoint[:-3]  # Remove /v1
+        urls_to_check.append(f"{base_url}/health")
+        urls_to_check.append(base_url)
+    else:
+        # Endpoint doesn't have /v1, try with and without
+        urls_to_check.append(f"{base_endpoint}/v1/models")
+        urls_to_check.append(f"{base_endpoint}/models")
+        urls_to_check.append(f"{base_endpoint}/health")
+        urls_to_check.append(base_endpoint)
 
-    for ep in endpoints_to_check:
+    for url in urls_to_check:
         try:
             headers = {
                 'Authorization': f'Bearer {os.getenv("OPENAI_API_KEY", "cliproxy-direct-mode")}'
@@ -227,15 +268,17 @@ async def check_api_readiness():
 
             async with aiohttp.ClientSession() as session:
                 # Try to get the list of available models as a readiness check
-                async with session.get(f"{endpoint}{ep}", headers=headers) as response:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status in [200, 204]:  # 204 might be returned by some endpoints
                         api_ready = True
-                        print(f"API is ready to accept requests at {endpoint}{ep}")
+                        print(f"API is ready to accept requests at {url}")
                         return True
                     else:
-                        print(f"API not ready at {endpoint}{ep}, status: {response.status}")
+                        print(f"API not ready at {url}, status: {response.status}")
+        except asyncio.TimeoutError:
+            print(f"Timeout checking API readiness at {url}")
         except Exception as e:
-            print(f"Error checking API readiness at {endpoint}{ep}: {e}")
+            print(f"Error checking API readiness at {url}: {e}")
 
     return False
 
@@ -275,12 +318,16 @@ async def handle_general_query(message, query):
         llm_messages.append({"role": "user", "content": query})
 
         # Call the LLM through the CLIProxyAPI endpoint
-        endpoint = os.getenv('CLIPROXY_ENDPOINT')
+        base_endpoint = os.getenv('CLIPROXY_ENDPOINT')
         model = os.getenv('CLIPROXY_MODEL')
 
-        if not endpoint or not model:
+        if not base_endpoint or not model:
             await message.channel.send("❌ Configuration error: Missing CLIPROXY_ENDPOINT or CLIPROXY_MODEL")
             return
+
+        # Construct the correct chat completions URL
+        chat_url = get_chat_completions_url(base_endpoint)
+        print(f"[DEBUG] Using chat completions URL: {chat_url}")
 
         headers = {
             'Content-Type': 'application/json',
@@ -295,7 +342,7 @@ async def handle_general_query(message, query):
         }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(endpoint, headers=headers, json=payload) as response:
+            async with session.post(chat_url, headers=headers, json=payload) as response:
                 if response.status == 200:
                     data = await response.json()
                     # Handle both standard OpenAI format and potential variations
