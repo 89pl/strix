@@ -187,7 +187,7 @@ jobs:
 
       - name: Create Discord Bot Script
         run: |
-          cat > /tmp/discord_bot.py << 'EOF'
+          cat > /tmp/discord_bot.py << 'EOF_PY'
 import asyncio
 import discord
 from discord.ext import commands
@@ -215,7 +215,7 @@ async def on_ready():
     if channel_id != 0:
         channel = bot.get_channel(channel_id)
         if channel:
-            await channel.send(f"✅ Strix Security Agent is online and ready!\nModel: {os.getenv('CLIPROXY_MODEL', 'unknown')}\nAccounts: {os.getenv('ACCOUNTS_COUNT', '0')}")
+            await channel.send(f"✅ Strix Security Agent is online and ready!\\nModel: {os.getenv('CLIPROXY_MODEL', 'unknown')}\\nAccounts: {os.getenv('ACCOUNTS_COUNT', '0')}")
 
 @bot.command(name='scan')
 async def scan(ctx, target: str = None):
@@ -319,9 +319,9 @@ def validate_target(target):
     """Validate target format to prevent command injection"""
     import re
     # Allow domains, IPs, and URLs
-    domain_pattern = r'^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9](\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9])*\.?$'
-    ip_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
-    url_pattern = r'^https?://[^\s/$.?#].[^\s]*$'
+    domain_pattern = r'^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9](\\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9])*\\.?$'
+    ip_pattern = r'^(\d{1,3}\\.){3}\d{1,3}$'
+    url_pattern = r'^https?://[^\\s/$.?#].[^\\s]*$'
 
     return (
         re.match(domain_pattern, target) is not None or
@@ -339,7 +339,7 @@ async def send_results_to_discord(ctx, job_id, results):
             if len(content_str) > 1900:  # Leave room for prefix
                 content_str = content_str[:1900] + "... (truncated)"
 
-            message = f"📄 **{filename}**\n```\n{content_str}\n```"
+            message = f"📄 **{filename}**\\n```\\n{content_str}\\n```"
             await ctx.send(message)
             total_chars += len(message)
 
@@ -373,14 +373,13 @@ async def help_command(ctx):
 Supported targets:
 • Domains: example.com
 • IP addresses: 192.168.1.1
-• URLs: https://example.com
-"""
+• URLs: https://example.com"""
     await ctx.send(help_text)
 
 # Run the bot
 if __name__ == "__main__":
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
-EOF
+EOF_PY
 
       - name: Run Discord Bot
         timeout-minutes: 360
