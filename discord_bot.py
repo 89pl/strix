@@ -15,11 +15,14 @@ from datetime import datetime
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True  # Required to mention members
+intents.reactions = True  # Required for reactions
+intents.guilds = True  # Required to access guild info
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Global variables to maintain Strix context
 current_job_id = None
 job_results = {}
+active_scans = {}  # Track active scans with user info
 
 @bot.event
 async def on_ready():
@@ -70,6 +73,14 @@ async def handle_scan_request(message, target):
     job_id = f"job_{int(time.time())}"
     global current_job_id
     current_job_id = job_id
+
+    # Track the active scan with user info
+    active_scans[job_id] = {
+        'user_id': message.author.id,
+        'channel_id': message.channel.id,
+        'target': target,
+        'start_time': datetime.now()
+    }
 
     # Send initial message
     msg = await message.channel.send(f"🔍 Starting security scan on `{target}` (Job ID: {job_id})...")
@@ -129,7 +140,7 @@ async def handle_scan_request(message, target):
                 }
 
                 # Send results to Discord
-                asyncio.run_coroutine_threadsafe(send_results_to_discord(message.channel, job_id, results), bot.loop)
+                asyncio.run_coroutine_threadsafe(send_results_to_discord_with_notification(job_id), bot.loop)
 
         except subprocess.TimeoutExpired:
             job_results[job_id] = {
@@ -138,7 +149,7 @@ async def handle_scan_request(message, target):
                 'results': {'error': 'Scan timed out after 30 minutes'},
                 'status': 'timeout'
             }
-            asyncio.run_coroutine_threadsafe(message.channel.send(f"⏰ Scan for `{target}` timed out after 30 minutes."), bot.loop)
+            asyncio.run_coroutine_threadsafe(send_timeout_notification(job_id), bot.loop)
         except Exception as e:
             job_results[job_id] = {
                 'target': target,
@@ -146,7 +157,7 @@ async def handle_scan_request(message, target):
                 'results': {'error': str(e)},
                 'status': 'error'
             }
-            asyncio.run_coroutine_threadsafe(message.channel.send(f"❌ Error during scan: {str(e)}"), bot.loop)
+            asyncio.run_coroutine_threadsafe(send_error_notification(job_id, str(e)), bot.loop)
 
     # Run the scan in a separate thread
     scan_thread = threading.Thread(target=run_scan)
@@ -203,6 +214,14 @@ async def scan(ctx, target: str = None):
     job_id = f"job_{int(time.time())}"
     global current_job_id
     current_job_id = job_id
+
+    # Track the active scan with user info
+    active_scans[job_id] = {
+        'user_id': ctx.author.id,
+        'channel_id': ctx.channel.id,
+        'target': target,
+        'start_time': datetime.now()
+    }
 
     # Send initial message
     msg = await ctx.send(f"🔍 Starting security scan on `{target}` (Job ID: {job_id})...")
@@ -261,8 +280,8 @@ async def scan(ctx, target: str = None):
                     'status': 'completed'
                 }
 
-                # Send results to Discord
-                asyncio.run_coroutine_threadsafe(send_results_to_discord(ctx, job_id, results), bot.loop)
+                # Send results to Discord with notifications
+                asyncio.run_coroutine_threadsafe(send_results_to_discord_with_notification(job_id), bot.loop)
 
         except subprocess.TimeoutExpired:
             job_results[job_id] = {
@@ -271,7 +290,7 @@ async def scan(ctx, target: str = None):
                 'results': {'error': 'Scan timed out after 30 minutes'},
                 'status': 'timeout'
             }
-            asyncio.run_coroutine_threadsafe(ctx.send(f"⏰ Scan for `{target}` timed out after 30 minutes."), bot.loop)
+            asyncio.run_coroutine_threadsafe(send_timeout_notification(job_id), bot.loop)
         except Exception as e:
             job_results[job_id] = {
                 'target': target,
@@ -279,7 +298,7 @@ async def scan(ctx, target: str = None):
                 'results': {'error': str(e)},
                 'status': 'error'
             }
-            asyncio.run_coroutine_threadsafe(ctx.send(f"❌ Error during scan: {str(e)}"), bot.loop)
+            asyncio.run_coroutine_threadsafe(send_error_notification(job_id, str(e)), bot.loop)
 
     # Run the scan in a separate thread
     scan_thread = threading.Thread(target=run_scan)
@@ -298,6 +317,167 @@ def validate_target(target):
         re.match(ip_pattern, target) is not None or
         re.match(url_pattern, target) is not None
     )
+
+async def send_results_to_discord_with_notification(job_id):
+    """Send scan results to Discord with notifications"""
+    try:
+        scan_info = active_scans.get(job_id)
+        if not scan_info:
+            print(f"Could not find scan info for job {job_id}")
+            return
+
+        # Get the channel where the scan was initiated
+        channel = bot.get_channel(scan_info['channel_id'])
+        if not channel:
+            print(f"Could not find channel {scan_info['channel_id']}")
+            return
+
+        # Get the user who initiated the scan
+        guild = channel.guild
+        user = guild.get_member(scan_info['user_id']) if guild else None
+
+        # Find the Granter role
+        granter_role = None
+        if guild:
+            for role in guild.roles:
+                if 'granter' in role.name.lower():
+                    granter_role = role
+                    break
+
+        # Get the results
+        results = job_results.get(job_id, {})
+
+        # Send results with notifications
+        total_chars = 0
+        for filename, content in results.get('results', {}).items():
+            # Limit message length to Discord's 2000 character limit
+            content_str = str(content)
+            if len(content_str) > 1900:  # Leave room for prefix
+                content_str = content_str[:1900] + "... (truncated)"
+
+            message = f"📄 **{filename}**\n```\n{content_str}\n```"
+            await channel.send(message)
+            total_chars += len(message)
+
+            # If we're approaching rate limits, add a small delay
+            if total_chars > 5000:
+                await asyncio.sleep(1)
+                total_chars = 0
+
+        # Send completion message with mentions
+        completion_msg = f"✅ Scan job {job_id} completed for `{results.get('target', 'unknown')}`"
+        if user and granter_role:
+            completion_msg = f"✅ Scan job {job_id} completed for `{results.get('target', 'unknown')}`\nHey {user.mention} and <@&{granter_role.id}> - scan results are ready!"
+        elif user:
+            completion_msg = f"✅ Scan job {job_id} completed for `{results.get('target', 'unknown')}`\nHey {user.mention} - scan results are ready!"
+        elif granter_role:
+            completion_msg = f"✅ Scan job {job_id} completed for `{results.get('target', 'unknown')}`\nHey <@&{granter_role.id}> - scan results are ready!"
+
+        await channel.send(completion_msg)
+
+        # Remove from active scans
+        if job_id in active_scans:
+            del active_scans[job_id]
+
+    except Exception as e:
+        print(f"Error sending results with notification: {str(e)}")
+        # Try to send error to the original channel
+        scan_info = active_scans.get(job_id)
+        if scan_info:
+            channel = bot.get_channel(scan_info['channel_id'])
+            if channel:
+                await channel.send(f"❌ Error sending scan results: {str(e)}")
+
+
+async def send_timeout_notification(job_id):
+    """Send timeout notification to Discord"""
+    try:
+        scan_info = active_scans.get(job_id)
+        if not scan_info:
+            print(f"Could not find scan info for job {job_id}")
+            return
+
+        # Get the channel where the scan was initiated
+        channel = bot.get_channel(scan_info['channel_id'])
+        if not channel:
+            print(f"Could not find channel {scan_info['channel_id']}")
+            return
+
+        # Get the user who initiated the scan
+        guild = channel.guild
+        user = guild.get_member(scan_info['user_id']) if guild else None
+
+        # Find the Granter role
+        granter_role = None
+        if guild:
+            for role in guild.roles:
+                if 'granter' in role.name.lower():
+                    granter_role = role
+                    break
+
+        # Send timeout message with mentions
+        timeout_msg = f"⏰ Scan for `{scan_info['target']}` timed out after 30 minutes."
+        if user and granter_role:
+            timeout_msg = f"⏰ Scan for `{scan_info['target']}` timed out after 30 minutes.\nHey {user.mention} and <@&{granter_role.id}> - please check the target."
+        elif user:
+            timeout_msg = f"⏰ Scan for `{scan_info['target']}` timed out after 30 minutes.\nHey {user.mention} - please check the target."
+        elif granter_role:
+            timeout_msg = f"⏰ Scan for `{scan_info['target']}` timed out after 30 minutes.\nHey <@&{granter_role.id}> - please check the target."
+
+        await channel.send(timeout_msg)
+
+        # Remove from active scans
+        if job_id in active_scans:
+            del active_scans[job_id]
+
+    except Exception as e:
+        print(f"Error sending timeout notification: {str(e)}")
+
+
+async def send_error_notification(job_id, error_msg):
+    """Send error notification to Discord"""
+    try:
+        scan_info = active_scans.get(job_id)
+        if not scan_info:
+            print(f"Could not find scan info for job {job_id}")
+            return
+
+        # Get the channel where the scan was initiated
+        channel = bot.get_channel(scan_info['channel_id'])
+        if not channel:
+            print(f"Could not find channel {scan_info['channel_id']}")
+            return
+
+        # Get the user who initiated the scan
+        guild = channel.guild
+        user = guild.get_member(scan_info['user_id']) if guild else None
+
+        # Find the Granter role
+        granter_role = None
+        if guild:
+            for role in guild.roles:
+                if 'granter' in role.name.lower():
+                    granter_role = role
+                    break
+
+        # Send error message with mentions
+        error_notification = f"❌ Error during scan of `{scan_info['target']}`: {error_msg}"
+        if user and granter_role:
+            error_notification = f"❌ Error during scan of `{scan_info['target']}`: {error_msg}\nHey {user.mention} and <@&{granter_role.id}> - please investigate."
+        elif user:
+            error_notification = f"❌ Error during scan of `{scan_info['target']}`: {error_msg}\nHey {user.mention} - please investigate."
+        elif granter_role:
+            error_notification = f"❌ Error during scan of `{scan_info['target']}`: {error_msg}\nHey <@&{granter_role.id}> - please investigate."
+
+        await channel.send(error_notification)
+
+        # Remove from active scans
+        if job_id in active_scans:
+            del active_scans[job_id]
+
+    except Exception as e:
+        print(f"Error sending error notification: {str(e)}")
+
 
 async def send_results_to_discord(channel, job_id, results):
     """Send scan results to Discord"""
